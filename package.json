@@ -1,0 +1,18 @@
+{
+  "name": "browser-bookstore",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "seed": "node tools/seed.mjs",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.2.17",
+    "chart.js": "^4.4.1"
+  },
+  "devDependencies": { "typescript": "^5.4.5", "vite": "^5.4.8" }
+}
