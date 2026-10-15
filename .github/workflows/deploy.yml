@@ -4,7 +4,7 @@ on:
     branches: [ main ]
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 concurrency:
@@ -26,6 +26,20 @@ jobs:
           printf '{"commit":"%s","buildTime":"%s"}\n' "$GITHUB_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > public/version.json
       - name: Build
         run: npm run build
+      - name: Stage dist to repo root (legacy Pages serves root)
+        run: |
+          # 清掉根目录旧静态产物，保留源码目录
+          rm -rf assets version.json
+          cp -r dist/. .
+          # 移除 Vite 源码入口 index.html，用构建产物覆盖（已在上面 cp）
+          ls -la
+      - name: Commit dist to main
+        run: |
+          git config user.name "pi-agent"
+          git config user.email "pi-agent@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || git commit -m "chore: build dist for legacy Pages"
+          git push origin main
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
