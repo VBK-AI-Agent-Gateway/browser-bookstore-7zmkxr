@@ -7,24 +7,27 @@
  * 功能：/api/* 拦截、token 401/403、ISBN 409、订单事务 BEGIN/COMMIT/ROLLBACK、
  *      取消回滚库存、报表聚合、cache-first 离线、BroadcastChannel 同步。
  * ============================================================ */
-const CACHE = "yunshuge-v2";
-const DB_NAME = "yunshuge", DB_VER = 1;
+const CACHE = "yunshuge-v3";
+const DB_NAME = "yunshuge", DB_VER = 2;
 let bc = null; try { bc = new BroadcastChannel("yunshuge"); } catch (e) { bc = null; }
 let token = null, currentUserObj = null;
 let DBP = null;
 
 /* ---------- IndexedDB helpers ---------- */
+// 防御式升级：每步 try/catch，任一 createObjectStore/createIndex 失败都【不抛出】，
+// 避免异常冒出 onupgradeneeded 中止 version-change 事务（原报错根因）。
 function openDb() {
   if (DBP) return DBP;
   DBP = new Promise((res, rej) => {
-    const rq = indexedDB.open(DB_NAME, DB_VER);
-    // 关键：upgradeneeded 内只做【同步】schema 创建，绝不 await（异步会中止 version-change 事务）
+    let rq;
+    try { rq = indexedDB.open(DB_NAME, DB_VER); } catch (e) { rej(e); return; }
     rq.onupgradeneeded = () => {
       const d = rq.result;
-      if (!d.objectStore.contains("users")) { const s = d.createObjectStore("users", { keyPath: "id", autoIncrement: true }); s.createIndex("username", "username", { unique: true }); }
-      if (!d.objectStore.contains("books")) { const s = d.createObjectStore("books", { keyPath: "id", autoIncrement: true }); s.createIndex("isbn", "isbn", { unique: true }); s.createIndex("deleted", "deleted"); }
-      if (!d.objectStore.contains("orders")) { const s = d.createObjectStore("orders", { keyPath: "id", autoIncrement: true }); s.createIndex("status", "status"); s.createIndex("created_at", "created_at"); }
-      if (!d.objectStore.contains("order_items")) { const s = d.createObjectStore("order_items", { keyPath: "id", autoIncrement: true }); s.createIndex("order_id", "order_id"); }
+      const safe = (fn) => { try { fn(); } catch (e) { /* 单步失败不中止整体升级 */ } };
+      safe(() => { if (!d.objectStoreNames.contains("users")) { const s = d.createObjectStore("users", { keyPath: "id", autoIncrement: true }); try { s.createIndex("username", "username", { unique: true }); } catch (e) { /* */ } } });
+      safe(() => { if (!d.objectStoreNames.contains("books")) { const s = d.createObjectStore("books", { keyPath: "id", autoIncrement: true }); try { s.createIndex("isbn", "isbn", { unique: true }); s.createIndex("deleted", "deleted"); } catch (e) { /* */ } } });
+      safe(() => { if (!d.objectStoreNames.contains("orders")) { const s = d.createObjectStore("orders", { keyPath: "id", autoIncrement: true }); try { s.createIndex("status", "status"); s.createIndex("created_at", "created_at"); } catch (e) { /* */ } } });
+      safe(() => { if (!d.objectStoreNames.contains("order_items")) { const s = d.createObjectStore("order_items", { keyPath: "id", autoIncrement: true }); try { s.createIndex("order_id", "order_id"); } catch (e) { /* */ } } });
     };
     rq.onsuccess = () => res(rq.result);
     rq.onerror = () => rej(rq.error);
@@ -267,11 +270,22 @@ self.addEventListener("fetch", (event) => {
     })());
     return;
   }
+  const accept = event.request.headers.get("accept") || "";
+  const isNav = event.request.mode === "navigate" || accept.includes("text/html");
+  const isFresh = isNav || url.pathname.endsWith("sw.js") || url.pathname.endsWith("version.json");
+  if (isFresh) {
+    // network-first：HTML/sw.js/version.json 必须拿最新版，失败才回落缓存（避免旧缓存覆盖新错误）
+    event.respondWith(fetch(event.request).then((r) => {
+      if (r && r.status === 200 && r.type === "basic") { caches.open(CACHE).then((c) => c.put(event.request, r.clone())); }
+      return r;
+    }).catch(() => caches.open(CACHE).then((c) => c.match(event.request, { ignoreSearch: true }))));
+    return;
+  }
   event.respondWith(caches.open(CACHE).then(async (cache) => {
     const cached = await cache.match(event.request, { ignoreSearch: true });
     const fp = fetch(event.request).then((r) => { if (r && r.status === 200) cache.put(event.request, r.clone()); return r; }).catch(() => cached);
     return cached || fp;
   }));
 });
-self.addEventListener("install", () => { self.skipWaiting(); });
-self.addEventListener("activate", (e) => { e.waitUntil(self.clients.claim()); });
+self.addEventListener("install", (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.skipWaiting())); });
+self.addEventListener("activate", (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });
