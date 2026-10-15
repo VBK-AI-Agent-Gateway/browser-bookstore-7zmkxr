@@ -18,6 +18,7 @@ function openDb() {
   if (DBP) return DBP;
   DBP = new Promise((res, rej) => {
     const rq = indexedDB.open(DB_NAME, DB_VER);
+    // 关键：upgradeneeded 内只做【同步】schema 创建，绝不 await（异步会中止 version-change 事务）
     rq.onupgradeneeded = () => {
       const d = rq.result;
       if (!d.objectStore.contains("users")) { const s = d.createObjectStore("users", { keyPath: "id", autoIncrement: true }); s.createIndex("username", "username", { unique: true }); }
@@ -27,6 +28,7 @@ function openDb() {
     };
     rq.onsuccess = () => res(rq.result);
     rq.onerror = () => rej(rq.error);
+    rq.onblocked = () => rej(new Error("IndexedDB blocked (another version open)"));
   });
   return DBP;
 }
