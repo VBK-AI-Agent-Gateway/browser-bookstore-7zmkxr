@@ -84,4 +84,8 @@ function render(): void {
   renderHeader(app); renderPage();
 }
 function setupBroadcast(): void { try { const bc = new BroadcastChannel("yunshuge"); bc.onmessage = (e) => { const t = e.data && e.data.t; if (t === "books" || t === "orders") showBanner("其他标签页已更新数据：" + t); renderPage(); }; } catch { /* */ } }
+// 全局错误兜底：任何未捕获异常/被拒 Promise 都显示到 #boot-error，绝不白屏
+function showFatal(msg: string): void { try { const el = document.getElementById("boot-error") || document.getElementById("app"); if (el) { el.hidden = false; el.textContent = "页面错误（已捕获）：" + msg; } } catch { /* */ } }
+window.addEventListener("error", (e) => { showFatal(e.message || "未知错误"); });
+window.addEventListener("unhandledrejection", (e) => { showFatal(String((e && (e as PromiseRejectionEvent).reason) || "Promise 被拒绝")); });
 (async () => { try { initTheme(); await registerSW(); setupBroadcast(); render(); } catch (e) { bootErr.hidden = false; bootErr.textContent = "初始化失败：" + (e instanceof Error ? e.message : String(e)); } })();
